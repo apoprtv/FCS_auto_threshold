@@ -14,16 +14,16 @@ from scipy.spatial.distance import cdist
 from scipy.interpolate import interp1d
 from fcswrite import write_fcs
 
-MIN_DISTANCE = 0
-XMAX, YMAX = 250000, 250000
-BINS = 1000
+MIN_DIST = 0  # Minimum acceptable distance from the curve for a point to be included in the filtered data
+XMAX, YMAX = 250000, 250000  # Maximum values for x and y axes in the heatmap
+BINS = 1000  # Number of bins for the heatmap
 
 
 class Processor:
     def create_heatmap(
         self,
-        x: np.ndarray | pd.Series[int],
-        y: np.ndarray | pd.Series[int],
+        x,
+        y,
         filename: str,
         name: str,
     ):
@@ -39,7 +39,7 @@ class Processor:
         hm.invert_yaxis()
         plt.savefig(f"{filename}_{name}_heatmap.png")
 
-    def load_fcs(self, filename: str):
+    def _load_fcs(self, filename: str):
         fcs = FlowData(filename)
 
         if not fcs:
@@ -50,7 +50,7 @@ class Processor:
         df = pd.DataFrame(events, columns=fcs.channels)
         return fcs, df
 
-    def preprocess_data(self, df: pd.DataFrame):
+    def _preprocess_data(self, df: pd.DataFrame):
         # Get FSC-A, FSC-H
         fscatters = df.iloc[:, :2]
 
@@ -62,7 +62,7 @@ class Processor:
 
         return fscatters, x, y
 
-    def fit_curve(self, x, y):
+    def _fit_curve(self, x, y):
         model = make_pipeline(
             SplineTransformer(n_knots=5, degree=3), LinearRegression()
         )
@@ -74,7 +74,7 @@ class Processor:
 
         return x_smooth, y_smooth
 
-    def compute_mask(self, fscatters, x_smooth, y_smooth):
+    def _compute_mask(self, fscatters, x_smooth, y_smooth):
         points = fscatters.iloc[:, :3].to_numpy()
         curve = np.column_stack((x_smooth, y_smooth))
 
@@ -89,27 +89,27 @@ class Processor:
         y_curve_interpolated_points = curve_interp(fscatters.iloc[:, 0])
 
         mask = (fscatters.iloc[:, 1] > y_curve_interpolated_points) | (
-            min_dist <= MIN_DISTANCE
+            min_dist <= MIN_DIST
         )
 
         return mask
 
-    def filter_data(self, df, mask):
+    def _filter_data(self, df, mask):
         return df[mask]
 
     def process(self, filename):
-        fcs, df = self.load_fcs(filename)
+        fcs, df = self._load_fcs(filename)
 
-        fscatters, x, y = self.preprocess_data(df)
+        fscatters, x, y = self._preprocess_data(df)
 
         # Get original heatmap
         self.create_heatmap(x, y, filename, name="original")
 
-        x_smooth, y_smooth = self.fit_curve(x, y)
+        x_smooth, y_smooth = self._fit_curve(x, y)
 
-        mask = self.compute_mask(fscatters, x_smooth, y_smooth)
+        mask = self._compute_mask(fscatters, x_smooth, y_smooth)
 
-        filtered = self.filter_data(df, mask)
+        filtered = self._filter_data(df, mask)
 
         channel_names = fcs.pnn_labels
         write_fcs(
@@ -126,7 +126,14 @@ class Processor:
 
 if __name__ == "__main__":
     directory = input("directory or filename: ")
-    MIN_DISTANCE = int(input("minimal acceptable distance: "))
+
+    MIN_DIST = int(input("minimal acceptable distance: "))
+    XMAX = int(
+        input("max value for x axis (leave empty for default 250000): ") or 250000
+    )
+    YMAX = int(
+        input("max value for y axis (leave empty for default 250000): ") or 250000
+    )
 
     files = []
 
