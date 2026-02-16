@@ -1,0 +1,10 @@
+/.venv
+/analiza.exe
+/analiza.ipynb
+/analiza.spec
+/build
+/converter.ico
+/data
+/dist
+/example_results
+/last_data
