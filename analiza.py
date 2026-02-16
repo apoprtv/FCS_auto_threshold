@@ -1,6 +1,8 @@
 #!/usr/bin/env python
 # coding: utf-8
 
+print("Starting FCS data processor...", flush=True)
+
 import os
 import numpy as np
 import pandas as pd
@@ -125,15 +127,19 @@ class Processor:
 
 
 if __name__ == "__main__":
-    directory = input("directory or filename: ")
+    print("Welcome to FCS data processor!", flush=True)
 
-    MIN_DIST = int(input("minimal acceptable distance: "))
-    XMAX = int(
-        input("max value for x axis (leave empty for default 250000): ") or 250000
-    )
-    YMAX = int(
-        input("max value for y axis (leave empty for default 250000): ") or 250000
-    )
+    print("directory or filename: ", end="", flush=True)
+    directory = input()
+
+    print("minimal acceptable distance: ", end="", flush=True)
+    MIN_DIST = int(input() or 0)
+
+    print("max value for x axis (leave empty for default 250000): ", end="", flush=True)
+    XMAX = int(input() or 250000)
+
+    print("max value for y axis (leave empty for default 250000): ", end="", flush=True)
+    YMAX = int(input() or 250000)
 
     files = []
 
@@ -152,3 +158,5 @@ if __name__ == "__main__":
         for path in files:
             if path.endswith(".fcs"):
                 processor.process(path)
+
+    print("Processing completed!", flush=True)
