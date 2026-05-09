@@ -19,6 +19,7 @@ class Processor:
         y_vals,
         filename: str,
         name: str,
+        show_plots=config.SHOW_PLOTS,
     ):
         """
         Creates and saves a heatmap based on the provided x and y values.
@@ -36,7 +37,7 @@ class Processor:
         hm.invert_yaxis()
         plt.savefig(f"{filename}_{name}_heatmap.png")
 
-        if config.SHOW_PLOTS:
+        if show_plots:
             plt.show()
 
     def _load_fcs(self, filename: str):
@@ -87,7 +88,7 @@ class Processor:
 
         return x_smooth, y_smooth
 
-    def _compute_mask(self, fscatters, x_smooth, y_smooth):
+    def _compute_mask(self, fscatters, x_smooth, y_smooth, variant=0):
         """
         Computes a boolean mask for the data points based on their distance from the fitted curve.
         """
@@ -104,31 +105,63 @@ class Processor:
 
         y_curve_interpolated_points = curve_interp(fscatters.iloc[:, 0])
 
-        mask = (fscatters.iloc[:, 1] > y_curve_interpolated_points) | (
-            min_dist <= config.MIN_DIST
-        )
+        match variant:
+            case 0:  # cut beneath the curve
+                mask = (fscatters.iloc[:, 1] > y_curve_interpolated_points) | (
+                    min_dist <= config.MIN_DIST
+                )
+            case 1:  # cut above the curve
+                mask = (fscatters.iloc[:, 1] < y_curve_interpolated_points) | (
+                    min_dist <= config.MIN_DIST
+                )
+            case 2:  # cut both above and beneath the curve
+                mask = (
+                    (fscatters.iloc[:, 1] > y_curve_interpolated_points)
+                    | (min_dist <= config.MIN_DIST)
+                ) & (
+                    (fscatters.iloc[:, 1] < y_curve_interpolated_points)
+                    | (min_dist <= config.MIN_DIST)
+                )
+            case _:  # default to cutting beneath the curve
+                mask = (fscatters.iloc[:, 1] > y_curve_interpolated_points) | (
+                    min_dist <= config.MIN_DIST
+                )
 
         return mask
 
     def _filter_data(self, df, mask):
         return df[mask]
 
-    def _process(self, filename):
+    def process(self, filename, variant=0, show_plots=config.SHOW_PLOTS):
         """
         Main processing function that orchestrates the loading, preprocessing, curve fitting,
         mask computation, data filtering, and heatmap creation for a given FCS file.
         """
-        fcs, df = self._load_fcs(filename)
+        if show_plots:
+            plt.ion()
 
-        fscatters, x, y = self._preprocess_data(df)
+        while True:
+            fcs, df = self._load_fcs(filename)
 
-        self._create_heatmap(x, y, filename, name="original")
+            df_original = df.copy()
 
-        x_smooth, y_smooth = self._fit_curve(x, y)
+            fscatters, x, y = self._preprocess_data(df_original)
 
-        mask = self._compute_mask(fscatters, x_smooth, y_smooth)
+            self._create_heatmap(x, y, filename, name="original")
 
-        filtered = self._filter_data(df, mask)
+            x_smooth, y_smooth = self._fit_curve(x, y)
+
+            mask = self._compute_mask(fscatters, x_smooth, y_smooth)
+
+            filtered = self._filter_data(df_original, mask)
+
+            if show_plots:
+                user_accept = input("Accept the filtered data? (1 for yes, 0 for no): ")
+                user_accept = bool(user_accept or 0)
+                if user_accept:
+                    break
+            else:
+                break
 
         channel_names = fcs.pnn_labels
 

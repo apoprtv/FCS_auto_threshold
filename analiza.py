@@ -12,37 +12,56 @@ from file_processor import Processor
 if __name__ == "__main__":
     print("Welcome to FCS data processor!", flush=True)
 
-    print("directory or filename: ", end="", flush=True)
-    directory = input()
+    while True:
 
-    print("minimal acceptable distance: ", end="", flush=True)
-    config.MIN_DIST = int(input() or 0)
+        print("directory or filename: ", end="", flush=True)
+        directory = input()
 
-    print("max value for x axis (leave empty for default 250000): ", end="", flush=True)
-    config.XMAX = int(input() or 250000)
+        print("minimal acceptable distance: ", end="", flush=True)
+        config.MIN_DIST = int(input() or 0)
 
-    print("max value for y axis (leave empty for default 250000): ", end="", flush=True)
-    config.YMAX = int(input() or 250000)
+        print(
+            "Choose variant for cutting data points (0 for beneath the curve, 1 for above the curve, 2 for both): ",
+            end="",
+            flush=True,
+        )
+        variant = int(input() or 0)
 
-    print("Show plots? (1 for yes, 0 for no): ", end="", flush=True)
-    config.SHOW_PLOTS = int(input() or 0)
+        print(
+            "max value for x axis (leave empty for default 250000): ",
+            end="",
+            flush=True,
+        )
+        config.XMAX = int(input() or 250000)
 
-    files = []
+        print(
+            "max value for y axis (leave empty for default 250000): ",
+            end="",
+            flush=True,
+        )
+        config.YMAX = int(input() or 250000)
 
-    processor = Processor()
+        print("Show plots? (1 for yes, 0 for no): ", end="", flush=True)
+        show_plots = bool(input() or 0)
 
-    if directory[len(directory) - 3 :] == "fcs":
-        processor._process(directory)
+        files = []
 
-    elif directory == "" or not directory:
-        files = os.listdir(os.getcwd())
+        processor = Processor()
 
-    else:
-        files = os.listdir(directory)
+        if directory[len(directory) - 3 :] == "fcs":
+            processor.process(directory, variant=variant, show_plots=show_plots)
 
-    if files:
-        for path in files:
-            if path.endswith(".fcs"):
-                processor._process(path)
+        elif directory == "" or not directory:
+            files = os.listdir(os.getcwd())
 
-    print("Processing completed!", flush=True)
+        else:
+            files = os.listdir(directory)
+
+        if files:
+            for path in files:
+                if path.endswith(".fcs"):
+                    processor.process(path, variant=variant, show_plots=show_plots)
+                    print("Processing completed!", flush=True)
+
+        if not files or not any(file.endswith(".fcs") for file in files):
+            print("No files found in the specified directory.", flush=True)
