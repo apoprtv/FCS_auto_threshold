@@ -2,6 +2,10 @@ from config import Config
 import numpy as np
 import pandas as pd
 from flowio import FlowData
+from io import BytesIO
+import base64
+import tempfile
+import os
 
 from sklearn.linear_model import LinearRegression
 from sklearn.preprocessing import SplineTransformer
@@ -17,11 +21,11 @@ class ProcessedData:
         self.data = data
 
 
-def load_fcs(filename: str) -> tuple[list, pd.DataFrame]:
+def load_fcs(file: str | BytesIO) -> tuple[list, pd.DataFrame]:
     """
     Loads FCS data from a file and returns both the FlowData object and a DataFrame containing the events.
     """
-    fcs = FlowData(filename)
+    fcs = FlowData(file)
     if not fcs:
         raise ValueError("file does not exist")
 
@@ -32,6 +36,39 @@ def load_fcs(filename: str) -> tuple[list, pd.DataFrame]:
     df = pd.DataFrame(events, columns=channel_names)
 
     return channel_names, df
+
+
+def load_file_from_base64(contents: str) -> GraphData:
+    """contents has this structure:
+    [
+        "data:application/octet-stream;base64",
+        "SGVsbG8..."
+    ]"""
+    _, content_string = contents.split(",", 1)
+    decoded = base64.b64decode(content_string)
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".fcs") as tmp:
+        tmp.write(decoded)
+        tmp_path = tmp.name
+
+    try:
+        channel_names, unprocessed_data = load_fcs(tmp_path)
+
+        x_vals, y_vals = extract_data(unprocessed_data)
+        x_smooth, y_smooth = fit_curve(x_vals, y_vals)
+
+        return GraphData(
+            channel_names,
+            x_vals,
+            y_vals,
+            x_vals,
+            y_vals,
+            x_smooth,
+            y_smooth,
+            None,
+        )
+    finally:
+        os.remove(tmp_path)
 
 
 def extract_data(df: pd.DataFrame):

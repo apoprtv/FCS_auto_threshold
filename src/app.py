@@ -1,6 +1,5 @@
-from taipy.gui import Gui
-from taipy.gui.state import State
-import taipy.gui.builder as tgb
+from dash import Dash, dcc, html, Input, Output, State, callback, ctx
+from flask_caching import Cache
 import numpy as np
 import plotly.graph_objects as go
 from config import Config
@@ -33,144 +32,105 @@ ymax = 250000
 variant = "Above"
 show_plots = False
 
-data = {"x_col": [0, 1, 2], "y_col_1": [4, 1, 2], "y_col_2": [3, 1, 2]}
-
-layout = {"yaxis": {"title": "Revenue (USD)"}, "title": "Sales by State"}
-
-heatmap_data = {"x": [10, 20, 30, 30], "y": [50, 60, 90, 90]}
-
-heatmap, xedges, yedges = np.histogram2d(
-    heatmap_data.get("x", []),
-    heatmap_data.get("y", []),
-    bins=100,
-    range=[[0, 100], [0, 100]],
-)
-heatmap = heatmap / heatmap.max()
-
-plotly_fig = go.Figure(data=go.Heatmap(z=heatmap.T, colorscale="Viridis"))
-
-plotly_fig.update_layout(title="Heatmap", width=600, height=600)
-
 ### ===========
 
 file_path = ""
 graph_left = None
 graph_right = None
 
-plotly_fig = go.Figure(data=go.Heatmap(z=heatmap.T, colorscale="Viridis"))
-plotly_fig.update_layout(title="Heatmap", width=600, height=600)
 
-
-def load_file(state: State) -> GraphData:
-    print(f"action!, this is file_path: {state.file_path}")
-    channel_names, unprocessed_data = processor.load_fcs(state.file_path)
-    x_vals, y_vals = processor.extract_data(unprocessed_data)
-    x_smooth, y_smooth = processor.fit_curve(x_vals, y_vals)
-    return GraphData(
-        channel_names, x_vals, y_vals, x_vals, y_vals, x_smooth, y_smooth, None
-    )
-
-
-def update_graph(state: State, graph_name: str, graph_data: GraphData):
-    if not hasattr(state, graph_name):
-        raise ValueError(f"Unidentified graph_name: {graph_name}")
-
-    updated_config = Config(
-        MIN_DIST=state.min_dist,
-        XMAX=state.xmax,
-        YMAX=state.ymax,
-        VARIANT=state.variant,
-        SHOW_PLOTS=state.show_plots,
-        SAVE_PLOTS=False,
-        BINS=1000,
-    )
-
-    graph = getattr(state, graph_name, None)
-
-    if graph is None:
-        graph = create_heatmap(graph_data, updated_config, state.file_path)
-    else:
-        graph = update_heatmap(graph, graph_data, updated_config)
-
-    graph.update_layout(
-        title=graph_name,
-        width=600,
-        height=600,
-        transition={"duration": 3000, "easing": "cubic-in-out"},
-        uirevision="heatmap",
-    )
-
-    setattr(state, graph_name, graph)
+def load_file_from_path(file: str) -> GraphData:
+    return processor.load_file_from_base64(file)
 
 
 # TODO: Rozdzielić update od kreacji heatmapy, powinna być tworzona raz, chyba że jest zmieniany plik, czyli kiedy selector ma aktywowane on_action. Zwykły update_graph powinien edytować tylko dany obiekt, nie tworzyć nowego graphu
 
 
-def process_selected_file(state: State, id: str, payload: dict):
-    data = load_file(state)
+def build_figure(graph: GraphData):
+    fig = create_heatmap(graph, config, "")
+    return fig
 
-    updated_config = Config(
-        MIN_DIST=state.min_dist,
-        XMAX=state.xmax,
-        YMAX=state.ymax,
-        VARIANT=state.variant,
-        SHOW_PLOTS=state.show_plots,
+
+@callback(Input("file-upload", "contents"), prevent_initial_call=True)
+def file_upload_handler(contents):
+    graph_data = load_file_from_path(contents)
+    cache.set("graph_data", graph_data)
+
+
+@callback(
+    Output("graph-left", "figure"),
+    Output("graph-right", "figure"),
+    Input("min-dist", "value"),
+    Input("xmax", "value"),
+    Input("ymax", "value"),
+    Input("variant", "value"),
+    prevent_initial_call=True,
+)
+def process_file(min_dist, xmax, ymax, variant):
+    graph_data = cache.get("graph_data")
+
+    cfg = Config(
+        MIN_DIST=min_dist,
+        XMAX=xmax,
+        YMAX=ymax,
+        VARIANT=variant,
+        SHOW_PLOTS=False,
         SAVE_PLOTS=False,
         BINS=1000,
     )
 
-    print(f"updated config: {updated_config}")
-
-    processed_data = processor.process_data(
-        data.channel_names, data.x_vals_original, data.y_vals_original, updated_config
+    processed = processor.process_data(
+        graph_data.channel_names,
+        graph_data.x_vals_original,
+        graph_data.y_vals_original,
+        cfg,
     )
 
-    update_graph(state, "graph_left", data)
-    update_graph(state, "graph_right", processed_data)
+    fig_left = build_figure(graph_data)
+    fig_right = build_figure(processed)
+
+    return fig_left, fig_right
 
 
 ### PAGE ###
 
 
-with tgb.Page() as page:
-    tgb.selector(
-        value="{config.SHOW_PLOTS}", lov="{show_plots_lov}", on_change=set_show_plots  # type: ignore
-    )
+app = Dash(__name__)
 
-    # TODO: Add a CSS class to make the columns fit closer together rather than spreading across the entire width
-    with tgb.part():
-        with tgb.layout(columns="1 1 1 1"):
-            with tgb.part():
-                tgb.number(
-                    value="{min_dist}",
-                    label="Cutoff Distance",
-                    on_change=process_selected_file,
-                )
-            with tgb.part():
-                tgb.selector(value="{variant}", lov=variants, on_change=process_selected_file, width="240px", dropdown=True)  # type: ignore
-            with tgb.part():
-                tgb.number(
-                    value="{xmax}", label="Max X", on_change=process_selected_file
-                )
-            with tgb.part():
-                tgb.number(
-                    value="{ymax}", label="Max Y", on_change=process_selected_file
-                )
+cache = Cache(app.server, config={"CACHE_TYPE": "SimpleCache"})
 
-    tgb.file_selector(
-        content="{file_path}", on_action=process_selected_file, extensions=".fcs"
-    )
-    tgb.text("Selected file path: {file_path}")
-
-    # tgb.button("Process data", on_action=process_data)
-
-    with tgb.layout(columns="1 1"):
-        with tgb.part():
-            tgb.chart(figure="{graph_left}")
-        with tgb.part():
-            tgb.chart(figure="{graph_right}")
+app.layout = html.Div(
+    [
+        dcc.Store(id="graph-left-store"),
+        dcc.Store(id="graph-right-store"),
+        # Controls
+        html.Div(
+            [
+                dcc.Input(id="min-dist", type="number", value=0),
+                dcc.Dropdown(
+                    id="variant",
+                    options=[{"label": v, "value": v} for v in variants],
+                    value="Above",
+                ),
+                dcc.Input(id="xmax", type="number", value=250000),
+                dcc.Input(id="ymax", type="number", value=250000),
+            ],
+            style={"display": "grid", "gridTemplateColumns": "1fr 1fr 1fr 1fr"},
+        ),
+        dcc.Upload(
+            id="file-upload", children=html.Button("Upload .fcs file"), multiple=False
+        ),
+        html.Div(id="file-path-display"),
+        # Graphs
+        html.Div(
+            [
+                dcc.Graph(id="graph-left"),
+                dcc.Graph(id="graph-right"),
+            ],
+            style={"display": "grid", "gridTemplateColumns": "1fr 1fr"},
+        ),
+    ]
+)
 
 if __name__ == "__main__":
-    Gui(page=page).run(
-        title="duppa", dark_mode=True, debug=True, watermark="", use_reloader=True
-    )
+    app.run(debug=True, dev_tools_hot_reload=True)
