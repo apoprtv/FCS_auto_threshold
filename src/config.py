@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 
 
-@dataclass
+@dataclass(frozen=False)
 class Config:
     MIN_DIST: int
     XMAX: int
@@ -9,4 +9,4 @@ class Config:
     BINS: int
     SHOW_PLOTS: bool
     SAVE_PLOTS: bool
-    VARIANT: int
+    VARIANT: str

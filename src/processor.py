@@ -8,6 +8,7 @@ from sklearn.preprocessing import SplineTransformer
 from sklearn.pipeline import make_pipeline
 from scipy.spatial.distance import cdist
 from scipy.interpolate import interp1d
+from graph_drawer import GraphData
 
 
 class ProcessedData:
@@ -16,7 +17,7 @@ class ProcessedData:
         self.data = data
 
 
-def load_fcs(filename: str):
+def load_fcs(filename: str) -> tuple[list, pd.DataFrame]:
     """
     Loads FCS data from a file and returns both the FlowData object and a DataFrame containing the events.
     """
@@ -24,15 +25,16 @@ def load_fcs(filename: str):
     if not fcs:
         raise ValueError("file does not exist")
 
-    n_channels = len(fcs.channels)
+    channel_names = [fcs.channels[i]["pnn"] for i in fcs.channels]
+    n_channels = len(channel_names)
     events = np.asarray(fcs.events).reshape(-1, n_channels)
 
-    df = pd.DataFrame(events, columns=fcs.channels)
+    df = pd.DataFrame(events, columns=channel_names)
 
-    return fcs, df
+    return channel_names, df
 
 
-def excract_data(df: pd.DataFrame):
+def extract_data(df: pd.DataFrame):
     """
     Preprocesses the data by extracting the columns corresponding to FSC-A and FSC-H
     and returning them as a DataFrame along with separate Series for x and y values.
@@ -47,10 +49,10 @@ def excract_data(df: pd.DataFrame):
     x_vals = fscatters.iloc[:, 0]
     y_vals = fscatters.iloc[:, 1]
 
-    if fscatters.empty or x_vals.empty or y_vals.empty:
+    if x_vals.empty or y_vals.empty:
         raise ValueError("data is empty")
 
-    return fscatters, x_vals, y_vals
+    return x_vals, y_vals
 
 
 def fit_curve(x_vals, y_vals):
@@ -63,72 +65,66 @@ def fit_curve(x_vals, y_vals):
     model.fit(x_vals, y_vals)
 
     x_smooth = np.linspace(x_vals.min(), x_vals.max(), 1000).reshape(-1, 1)
+    x_smooth = x_smooth
     y_smooth = model.predict(x_smooth)
 
-    return x_smooth, y_smooth
+    return x_smooth.flatten(), y_smooth
 
 
-def compute_mask(fscatters, x_smooth, y_smooth, config: Config):
+def compute_mask(x_vals, y_vals, x_smooth, y_smooth, config: Config):
     """
     Computes a boolean mask for the data points based on their distance from the fitted curve.
     """
-    points = fscatters.iloc[:, :3].to_numpy()
+    x_vals = np.asarray(x_vals)
+    y_vals = np.asarray(y_vals)
+
+    points = np.column_stack((x_vals, y_vals))
+
     curve = np.column_stack((x_smooth, y_smooth))
 
     distances = cdist(points, curve)
-
     min_dist = distances.min(axis=1)
 
     curve_interp = interp1d(
         curve[:, 0], curve[:, 1], kind="linear", fill_value="extrapolate"
     )
 
-    y_curve_interpolated_points = curve_interp(fscatters.iloc[:, 0])
+    y_curve = curve_interp(x_vals)
+
+    close = min_dist <= config.MIN_DIST
+    far = ~close
+    above = y_vals > y_curve
+    below = y_vals < y_curve
 
     match config.VARIANT:
-        case 0:  # cut beneath the curve
-            mask = (fscatters.iloc[:, 1] > y_curve_interpolated_points) | (
-                min_dist <= config.MIN_DIST
-            )
-        case 1:  # cut above the curve
-            mask = (fscatters.iloc[:, 1] < y_curve_interpolated_points) | (
-                min_dist <= config.MIN_DIST
-            )
-        case 2:  # cut both above and beneath the curve
-            mask = (
-                (fscatters.iloc[:, 1] > y_curve_interpolated_points)
-                | (min_dist <= config.MIN_DIST)
-            ) & (
-                (fscatters.iloc[:, 1] < y_curve_interpolated_points)
-                | (min_dist <= config.MIN_DIST)
-            )
+        case "Below":  # cut beneath the curve
+            mask = ~(above & far)
+        case "Above":  # cut above the curve
+            mask = ~(below & far)
+        case "Both":  # cut both above and beneath the curve
+            mask = ~far
         case _:  # default to cutting beneath the curve
-            mask = (fscatters.iloc[:, 1] > y_curve_interpolated_points) | (
-                min_dist <= config.MIN_DIST
-            )
+            mask = ~(above & far)
 
-    return mask
+    return points, mask
 
 
-def filter_data(df, mask):
-    return df[mask]
+def filter_data(points, mask):
+    return points[mask]
 
 
-def process_data(fcs, df, config: Config):
+def process_data(channel_names, x, y, config: Config):
     """
-    Main processing function that orchestrates the loading, preprocessing, curve fitting,
+    Main processing function that orchestrates the preprocessing, curve fitting,
     mask computation, data filtering, and heatmap creation for a given FCS file.
     """
-    df_original = df.copy()
-
-    fscatters, x, y = excract_data(df_original)
     x_smooth, y_smooth = fit_curve(x, y)
-    mask = compute_mask(fscatters, x_smooth, y_smooth, config)
-    filtered = filter_data(fscatters, mask)
-    filtered_dict = {
-        "x": filtered.iloc[:, 0].to_numpy(),
-        "y": filtered.iloc[:, 1].to_numpy(),
-    }
-    channel_names = fcs.pnn_labels
+    points, mask = compute_mask(x, y, x_smooth, y_smooth, config)
+    filtered = filter_data(points, mask)
 
-    return ProcessedData(channel_names, filtered_dict)
+    x_filtered = filtered[:, 0]
+    y_filtered = filtered[:, 1]
+
+    return GraphData(
+        channel_names, x, y, x_filtered, y_filtered, x_smooth, y_smooth, mask
+    )
