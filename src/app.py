@@ -5,7 +5,7 @@ import numpy as np
 import plotly.graph_objects as go
 from config import Config
 import processor
-from graph_drawer import create_heatmap, update_heatmap, GraphData
+from graph_drawer import create_heatmap, GraphData
 
 config = Config(
     MIN_DIST=0,
@@ -33,42 +33,13 @@ ymax = 250000
 variant = "Above"
 show_plots = False
 
-data = {"x_col": [0, 1, 2], "y_col_1": [4, 1, 2], "y_col_2": [3, 1, 2]}
-
-layout = {"yaxis": {"title": "Revenue (USD)"}, "title": "Sales by State"}
-
-heatmap_data = {"x": [10, 20, 30, 30], "y": [50, 60, 90, 90]}
-
-heatmap, xedges, yedges = np.histogram2d(
-    heatmap_data.get("x", []),
-    heatmap_data.get("y", []),
-    bins=100,
-    range=[[0, 100], [0, 100]],
-)
-heatmap = heatmap / heatmap.max()
-
-plotly_fig = go.Figure(data=go.Heatmap(z=heatmap.T, colorscale="Viridis"))
-
-plotly_fig.update_layout(title="Heatmap", width=600, height=600)
-
 ### ===========
 
 file_path = ""
+show_points = False
+original_graph_data = None
 graph_left = None
 graph_right = None
-
-plotly_fig = go.Figure(data=go.Heatmap(z=heatmap.T, colorscale="Viridis"))
-plotly_fig.update_layout(title="Heatmap", width=600, height=600)
-
-
-def load_file(state: State) -> GraphData:
-    print(f"action!, this is file_path: {state.file_path}")
-    channel_names, unprocessed_data = processor.load_fcs(state.file_path)
-    x_vals, y_vals = processor.extract_data(unprocessed_data)
-    x_smooth, y_smooth = processor.fit_curve(x_vals, y_vals)
-    return GraphData(
-        channel_names, x_vals, y_vals, x_vals, y_vals, x_smooth, y_smooth, None
-    )
 
 
 def update_graph(state: State, graph_name: str, graph_data: GraphData):
@@ -85,19 +56,15 @@ def update_graph(state: State, graph_name: str, graph_data: GraphData):
         BINS=1000,
     )
 
-    graph = getattr(state, graph_name, None)
-
-    if graph is None:
-        graph = create_heatmap(graph_data, updated_config, state.file_path)
-    else:
-        graph = update_heatmap(graph, graph_data, updated_config)
+    graph = create_heatmap(
+        graph_data, updated_config, state.show_points, state.file_path
+    )
 
     graph.update_layout(
         title=graph_name,
-        width=600,
-        height=600,
-        transition={"duration": 3000, "easing": "cubic-in-out"},
-        uirevision="heatmap",
+        autosize=True,
+        transition={"duration": 300, "easing": "cubic-in-out"},
+        showlegend=False,
     )
 
     setattr(state, graph_name, graph)
@@ -106,8 +73,27 @@ def update_graph(state: State, graph_name: str, graph_data: GraphData):
 # TODO: Rozdzielić update od kreacji heatmapy, powinna być tworzona raz, chyba że jest zmieniany plik, czyli kiedy selector ma aktywowane on_action. Zwykły update_graph powinien edytować tylko dany obiekt, nie tworzyć nowego graphu
 
 
-def process_selected_file(state: State, id: str, payload: dict):
-    data = load_file(state)
+def load_file(state: State) -> None:
+    channel_names, unprocessed_data = processor.load_fcs(state.file_path)
+    x_vals, y_vals = processor.extract_data(unprocessed_data)
+    x_smooth, y_smooth = processor.fit_curve(x_vals, y_vals)
+    original_graph_data = GraphData(
+        channel_names, x_vals, y_vals, x_vals, y_vals, x_smooth, y_smooth, None
+    )
+    state.original_graph_data = original_graph_data
+
+
+def load_selected_file(state: State) -> None:
+    load_file(state)
+    process_selected_file(state=state)
+
+
+def process_selected_file(state: State, trigger=None) -> None:
+    data = getattr(state, "original_graph_data", None)
+
+    if data is None:
+        print("No data is loaded")
+        return
 
     updated_config = Config(
         MIN_DIST=state.min_dist,
@@ -118,8 +104,6 @@ def process_selected_file(state: State, id: str, payload: dict):
         SAVE_PLOTS=False,
         BINS=1000,
     )
-
-    print(f"updated config: {updated_config}")
 
     processed_data = processor.process_data(
         data.channel_names, data.x_vals_original, data.y_vals_original, updated_config
@@ -133,44 +117,57 @@ def process_selected_file(state: State, id: str, payload: dict):
 
 
 with tgb.Page() as page:
-    tgb.selector(
-        value="{config.SHOW_PLOTS}", lov="{show_plots_lov}", on_change=set_show_plots  # type: ignore
-    )
+    # tgb.selector(
+    #     value="{config.SHOW_PLOTS}", lov="{show_plots_lov}", on_change=set_show_plots  # type: ignore
+    # )
 
     # TODO: Add a CSS class to make the columns fit closer together rather than spreading across the entire width
-    with tgb.part():
+    with tgb.part(class_name="sticky-bar"):
         with tgb.layout(columns="1 1 1 1"):
             with tgb.part():
                 tgb.number(
                     value="{min_dist}",
                     label="Cutoff Distance",
                     on_change=process_selected_file,
+                    change_delay=500,
                 )
             with tgb.part():
                 tgb.selector(value="{variant}", lov=variants, on_change=process_selected_file, width="240px", dropdown=True)  # type: ignore
             with tgb.part():
                 tgb.number(
-                    value="{xmax}", label="Max X", on_change=process_selected_file
+                    value="{xmax}",
+                    label="Max X",
+                    on_change=process_selected_file,
+                    change_delay=500,
                 )
             with tgb.part():
                 tgb.number(
-                    value="{ymax}", label="Max Y", on_change=process_selected_file
+                    value="{ymax}",
+                    label="Max Y",
+                    on_change=process_selected_file,
+                    change_delay=500,
                 )
 
     tgb.file_selector(
-        content="{file_path}", on_action=process_selected_file, extensions=".fcs"
+        content="{file_path}", on_action=load_selected_file, extensions=".fcs"
     )
-    tgb.text("Selected file path: {file_path}")
 
     # tgb.button("Process data", on_action=process_data)
 
+    tgb.toggle(
+        value="{show_points}",
+        allow_unselect=True,
+        label="Show Points",
+        on_change=lambda state: process_selected_file(state, "show_points"),
+    )
+
     with tgb.layout(columns="1 1"):
         with tgb.part():
-            tgb.chart(figure="{graph_left}")
+            tgb.chart(figure="{graph_left}", class_name="square-chart")
         with tgb.part():
-            tgb.chart(figure="{graph_right}")
+            tgb.chart(figure="{graph_right}", class_name="square-chart")
 
 if __name__ == "__main__":
-    Gui(page=page).run(
+    Gui(page=page, css_file="styles.css").run(
         title="duppa", dark_mode=True, debug=True, watermark="", use_reloader=True
     )

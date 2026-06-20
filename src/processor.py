@@ -97,9 +97,9 @@ def compute_mask(x_vals, y_vals, x_smooth, y_smooth, config: Config):
     below = y_vals < y_curve
 
     match config.VARIANT:
-        case "Below":  # cut beneath the curve
-            mask = ~(above & far)
         case "Above":  # cut above the curve
+            mask = ~(above & far)
+        case "Below":  # cut below the curve
             mask = ~(below & far)
         case "Both":  # cut both above and beneath the curve
             mask = ~far
