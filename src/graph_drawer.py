@@ -7,15 +7,15 @@ from typing import Any
 from config import Config
 
 
-@dataclass(frozen=True)
+@dataclass()
 class GraphData:
     channel_names: list[str]
     x_vals_original: pd.Series | np.ndarray
     y_vals_original: pd.Series | np.ndarray
     x_vals: pd.Series | np.ndarray
     y_vals: pd.Series | np.ndarray
-    x_smooth: np.ndarray | None
-    y_smooth: np.ndarray | tuple | None
+    x_smooth: np.ndarray
+    y_smooth: np.ndarray | tuple
     mask: Any | None
 
 
@@ -28,11 +28,25 @@ def create_heatmap(
     if not name:
         name = ""
 
+    y_smooth = graph_data.y_smooth
+
+    if type(y_smooth) is not np.ndarray:
+        y_smooth = np.ndarray(y_smooth)
+
     heatmap, xedges, yedges = np.histogram2d(
         graph_data.x_vals,
         graph_data.y_vals,
         bins=config.BINS,
-        range=[[0, config.XMAX], [0, config.YMAX]],
+        range=[
+            [0, max(graph_data.x_vals_original.max(), graph_data.x_smooth.max())],
+            [
+                0,
+                max(
+                    graph_data.y_vals_original.max(),
+                    y_smooth.max(),
+                ),
+            ],
+        ],
     )
     heatmap = heatmap / heatmap.max()
 
@@ -77,7 +91,5 @@ def create_heatmap(
     fig.update_layout(
         uirevision="constant",
     )
-    fig.update_xaxes(range=[0, config.XMAX])
-    fig.update_yaxes(range=[0, config.YMAX])
 
     return fig
