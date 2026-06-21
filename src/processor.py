@@ -2,6 +2,8 @@ from config import Config
 import numpy as np
 import pandas as pd
 from flowio import FlowData
+from fcswrite import write_fcs
+from pathlib import Path
 
 from sklearn.linear_model import LinearRegression
 from sklearn.preprocessing import SplineTransformer
@@ -109,22 +111,40 @@ def compute_mask(x_vals, y_vals, x_smooth, y_smooth, config: Config):
     return points, mask
 
 
-def filter_data(points, mask):
-    return points[mask]
+def filter_data(df, mask):
+    return df[mask]
 
 
-def process_data(channel_names, x, y, config: Config):
+def process_data(channel_names, df, config: Config):
     """
     Main processing function that orchestrates the preprocessing, curve fitting,
     mask computation, data filtering, and heatmap creation for a given FCS file.
     """
+    x, y = extract_data(df)
     x_smooth, y_smooth = fit_curve(x, y)
     points, mask = compute_mask(x, y, x_smooth, y_smooth, config)
-    filtered = filter_data(points, mask)
+    df_filtered = filter_data(df, mask)
 
-    x_filtered = filtered[:, 0]
-    y_filtered = filtered[:, 1]
+    x_filtered, y_filtered = extract_data(df_filtered)
 
-    return GraphData(
-        channel_names, x, y, x_filtered, y_filtered, x_smooth, y_smooth, mask
+    return (
+        GraphData(
+            channel_names, x, y, x_filtered, y_filtered, x_smooth, y_smooth, mask
+        ),
+        df_filtered,
+        channel_names,
     )
+
+
+def save_fcs(channel_names, file_path: str, save_path_str: str, df: pd.DataFrame):
+    p = Path(file_path)
+    short_path = "/".join(p.parts[-1:])
+    slices = str(short_path).split(".")
+    name = slices[0] + "_filtered" + "." + slices[2]
+
+    save_path = Path(save_path_str) / name
+
+    write_fcs(save_path, channel_names, df)
+    print(f"saved to: {save_path}")
+
+    return save_path

@@ -1,4 +1,5 @@
 from taipy.gui import Gui
+from taipy.gui.gui_actions import notify
 from taipy.gui.state import State
 import taipy.gui.builder as tgb
 from config import Config
@@ -38,12 +39,18 @@ files_ui: list[str] = []
 selected_file_path: str = ""
 selected_file_path_ui: str = ""
 show_points = False
+channel_names = None
+save_path: str = ""
+original_df = None
+filtered_df = None
 original_graph_data = None
 graph_left = None
 graph_right = None
+show_sidebar = False
+sidebar_class_name = "tree-overlay-hidden"
 
 
-def update_graph(state: State, graph_name: str, graph_data: GraphData):
+def update_graph(state: State, graph_name: str, title: str, graph_data: GraphData):
     if not hasattr(state, graph_name):
         raise ValueError(f"Unidentified graph_name: {graph_name}")
 
@@ -60,7 +67,7 @@ def update_graph(state: State, graph_name: str, graph_data: GraphData):
     )
 
     graph.update_layout(
-        title=graph_name,
+        title=title,
         xaxis=dict(range=[0, max(graph_data.x_vals_original)]),
         yaxis=dict(range=[0, max(graph_data.y_vals_original)]),
         autosize=True,
@@ -73,6 +80,7 @@ def update_graph(state: State, graph_name: str, graph_data: GraphData):
 
 def load_file(state: State) -> None:
     channel_names, unprocessed_data = processor.load_fcs(state.selected_file_path)
+    state.original_df = unprocessed_data
     x_vals, y_vals = processor.extract_data(unprocessed_data)
     x_smooth, y_smooth = processor.fit_curve(x_vals, y_vals)
     original_graph_data = GraphData(
@@ -113,9 +121,10 @@ def build_folder_tree(state: State) -> None:
 
 
 def process_selected_file(state: State, trigger=None) -> None:
-    data = getattr(state, "original_graph_data", None)
+    graph_data = getattr(state, "original_graph_data", None)
+    df = getattr(state, "original_df", None)
 
-    if data is None:
+    if graph_data is None or df is None:
         print("No data is loaded")
         return
 
@@ -127,12 +136,15 @@ def process_selected_file(state: State, trigger=None) -> None:
         BINS=1000,
     )
 
-    processed_data = processor.process_data(
-        data.channel_names, data.x_vals_original, data.y_vals_original, updated_config
+    processed_data, df_filtered, channel_names = processor.process_data(
+        graph_data.channel_names, df, updated_config
     )
 
-    update_graph(state, "graph_left", data)
-    update_graph(state, "graph_right", processed_data)
+    state.filtered_df = df_filtered
+    state.channel_names = channel_names
+
+    update_graph(state, "graph_left", "Original", graph_data)
+    update_graph(state, "graph_right", "Filtered", processed_data)
 
 
 def process_selected_file_ui(state: State):
@@ -143,6 +155,43 @@ def process_selected_file_ui(state: State):
 
     load_file(state)
     process_selected_file(state)
+
+
+def save_filtered_data(state: State):
+    try:
+        save_path = processor.save_fcs(
+            state.channel_names,
+            state.selected_file_path,
+            state.save_path,
+            state.filtered_df,
+        )
+        notify(state, "success", f"Saved to: {save_path}")
+    except Exception as e:
+        notify(state, "error", f"Error while saving: {e}")
+
+
+def batch_save_filtered_data(state: State):
+    for file_path in state.file_paths:
+        channel_names, df = processor.load_fcs(file_path)
+        _, df_filtered, channel_names = processor.process_data(
+            channel_names, df, state.config
+        )
+        try:
+            save_path = processor.save_fcs(
+                channel_names, file_path, state.save_path, df_filtered
+            )
+            notify(state, "success", f"Saved to: {save_path}")
+        except Exception as e:
+            notify(state, "error", f"Error while saving: {e}")
+
+
+def toggle_sidebar(state: State):
+    state.show_sidebar = not state.show_sidebar
+
+    if state.show_sidebar:
+        state.sidebar_class_name = "tree-overlay-visible"
+    else:
+        state.sidebar_class_name = "tree-overlay-hidden"
 
 
 ### PAGE ###
@@ -177,12 +226,25 @@ with tgb.Page() as page:
                     )
                 with tgb.part():
                     tgb.selector(value="{variant}", label="Cutoff Variant", lov=variants, on_change=process_selected_file, dropdown=True)  # type: ignore
+                with tgb.part():
+                    tgb.input("{save_path}", label="Save path")
+                with tgb.part():
+                    tgb.button("Save", on_action=save_filtered_data)
+                with tgb.part():
+                    tgb.button("Batch Save", on_action=batch_save_filtered_data)
         with tgb.part():
             tgb.chart(figure="{graph_left}", class_name="square-chart")
         with tgb.part():
             tgb.chart(figure="{graph_right}", class_name="square-chart")
-
-    tgb.tree(value="{selected_file_path_ui}", lov="{files_ui}", on_change=process_selected_file_ui)  # type: ignore
+    with tgb.part(class_name="{sidebar_class_name}"):  # type: ignore
+        tgb.tree(
+            value="{selected_file_path_ui}",
+            lov="{files_ui}",  # type: ignore
+            on_change=process_selected_file_ui,
+        )
+    tgb.button(
+        "file selector tree", on_action=toggle_sidebar, class_name="sidebar-button"
+    )
 
 if __name__ == "__main__":
     Gui(page=page, css_file="styles.css").run(
